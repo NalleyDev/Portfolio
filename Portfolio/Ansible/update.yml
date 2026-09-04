@@ -1,0 +1,32 @@
+---
+- name: Update and autoremove packages on Linux hosts
+  hosts: all
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: Determine OS family
+      debug:
+        msg: "Operating System detected: {{ ansible_os_family }}"
+
+    - name: Update packages on Debian-based systems
+      apt:
+        update_cache: yes
+        upgrade: dist
+      when: ansible_os_family == "Debian"
+
+    - name: Autoremove unneeded packages on Debian-based systems
+      apt:
+        autoremove: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Update packages on RedHat-based systems
+      dnf:
+        name: "*"
+        state: latest
+      when: ansible_os_family == "RedHat"
+
+    - name: Autoremove unneeded packages on RedHat-based systems
+      dnf:
+        autoremove: yes
+      when: ansible_os_family == "RedHat"

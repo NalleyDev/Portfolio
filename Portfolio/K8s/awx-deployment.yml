@@ -1,0 +1,50 @@
+---
+apiVersion: awx.ansible.com/v1beta1
+kind: AWX
+metadata:
+  name: awx
+  namespace: awx
+spec:
+  service_type: clusterip
+  image: quay.io/ansible/awx
+  image_version: "24.6.1"
+  image_pull_policy: Always
+  image_pull_secrets: []
+  
+  # Replicas for high availability
+  web_replicas: 2
+  task_replicas: 2
+  
+  # PostgreSQL configuration
+  postgres_storage_class: nfs-csi-awx
+  postgres_storage_requirements:
+    requests:
+      storage: 8Gi
+  
+  # Fix for nobody:nobody NFS permissions - run as root to fix ownership
+  postgres_init_container_commands: |
+    chown -R postgres:postgres /var/lib/postgresql/data || true
+    chmod 700 /var/lib/postgresql/data || true
+  
+  # Projects persistence
+  projects_persistence: true
+  projects_storage_class: nfs-csi-awx
+  projects_storage_size: 2Gi
+  projects_storage_access_mode: ReadWriteOnce
+  
+  # Optional: Resource limits for better stability
+  web_resource_requirements:
+    requests:
+      memory: "2Gi"
+      cpu: "1000m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"
+  
+  task_resource_requirements:
+    requests:
+      memory: "2Gi"
+      cpu: "1000m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"

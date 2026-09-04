@@ -1,0 +1,68 @@
+services:
+
+  manyfold:
+    image: ghcr.io/manyfold3d/manyfold:latest
+    container_name: manyfold
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: America/Chicago                            # ← your timezone
+      DATABASE_ADAPTER: postgresql
+      DATABASE_HOST: postgres
+      DATABASE_NAME: manyfold
+      DATABASE_USER: manyfold
+      DATABASE_PASSWORD: changeme                    # ← change this
+      SECRET_KEY_BASE: replace_with_long_random_hex  # ← see note below
+      REDIS_URL: redis://redis:6379/1
+      PUBLIC_HOSTNAME: manyfold.example.com          # ← your FQDN
+      PUBLIC_PORT: 443
+    volumes:
+      - /path/to/your/models:/libraries              # ← your model library
+    # No ports exposed — nginx reaches it by container name over the shared default network
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+
+  postgres:
+    image: postgres:15
+    container_name: manyfold-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: manyfold
+      POSTGRES_USER: manyfold
+      POSTGRES_PASSWORD: changeme                    # ← match DATABASE_PASSWORD
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    container_name: manyfold-redis
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:stable-alpine
+    container_name: manyfold-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - manyfold
+
+volumes:
+  db_data:
+
+  

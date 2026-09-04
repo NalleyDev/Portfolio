@@ -1,0 +1,23 @@
+services:
+  portainer:
+    image: portainer/portainer-ce
+    container_name: portainer
+    restart: unless-stopped
+    ports:
+      - "9000:9000"  # HTTP only now
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+  nginx:
+    image: nginx:stable-alpine
+    container_name: portainer-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+
+volumes:
+  portainer_data:

@@ -1,0 +1,21 @@
+vsphere_user     = "CHANGE_ME"
+vsphere_password = "CHANGE_ME"
+vsphere_server   = "vcenter.example.com"
+
+datacenter = "Datacenter-1"
+datastore  = "Datastore-1"
+network    = "VM Network"
+cluster    = "Cluster-1"
+
+control_plane_count = 3
+worker_count        = 3
+num_cpus            = 4
+memory              = 8192
+disk_size           = 40
+domain              = "example.com"
+template            = "alma-linux-9-template"
+
+node_network_prefix    = "192.168.1"
+node_gateway           = "192.168.1.1"
+control_plane_ip_start = 50
+worker_ip_start        = 100

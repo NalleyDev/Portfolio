@@ -1,0 +1,21 @@
+vsphere_user     = "CHANGE_ME"
+vsphere_password = "CHANGE_ME"
+vsphere_server   = "vcenter.example.com"
+
+panos_host     = "firewall.example.com"
+panos_user     = "CHANGE_ME"
+panos_password = "CHANGE_ME"
+
+datacenter = "Datacenter-1"
+datastore  = "Datastore-1"
+network    = "VM Network"
+template   = "panos-vm-series-template"
+
+domain    = "example.com"
+num_cpus  = 2
+memory    = 4096
+disk_size = 60
+
+fw_ip_address = "192.168.2.1"
+fw_gateway    = "192.168.2.254"
+trust_cidr    = "192.168.2.0/24"

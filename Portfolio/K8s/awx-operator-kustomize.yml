@@ -1,0 +1,40 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  # Find the latest tag here: https://github.com/ansible/awx-operator/releases
+  - github.com/ansible/awx-operator/config/default?ref=2.19.1
+  - awx-manifest.yaml
+
+  # Set the image tags to match the git version from above
+images:
+  - name: quay.io/ansible/awx-operator
+    newTag: 2.19.1
+
+  # Specify a custom namespace in which to install AWX
+namespace: awx-poc
+
+---
+apiVersion: awx.ansible.com/v1beta1
+kind: AWX
+metadata:
+  name: awx-demo
+spec:
+  service_type: LoadBalancer
+  no_log: false
+  postgres_init_container_resource_requirements: {}
+  postgres_data_volume_init: true
+  replicas: 2
+  admin_user: admin
+  ipv6_disabled: true
+  web_liveness_period: 15
+  web_readiness_period: 15
+  task_liveness_period: 15
+  task_readiness_period: 15
+
+# kubectl create namespace awx-poc
+# kubectl apply -k .
+# kubectl get all -n awx-poc -w
+# kubectl -n awx-poc port-forward svc/awx-demo-service 9001:80
+# access via browser, http://localhost:9001/#/home
+# Username: admin
+# kubectl -n awx-poc  get secret awx-demo-admin-password -o jsonpath="{.data.password}" | base64 --decode ; echo

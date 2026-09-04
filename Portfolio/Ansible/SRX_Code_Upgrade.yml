@@ -1,0 +1,331 @@
+
+---
+- name: SRX Junos Code Upgrade
+  hosts: all
+  collections:
+    - juniper.device
+  connection: local
+  gather_facts: false
+
+  serial: "{{ upgrade_batch | default(1) }}"
+
+  vars:
+    default_image: "{{ package_url | default('') }}"
+    raw_map: "{{ package_url_map | default({}, true) }}"
+    image_map: "{{ raw_map if raw_map is mapping else (raw_map | from_yaml | default({}, true)) }}"
+    required_free_mb: "{{ min_free_mb | default(2000) }}"
+    check_mode_only: "{{ check_only | default(false) }}"
+    force: "{{ force_upgrade | default(false) }}"
+    do_cleanup: "{{ run_storage_cleanup | default(true) }}"
+    do_consolidate: "{{ run_storage_consolidate | default(true) }}"
+    tick: "{{ poll_interval | default(30) }}"
+    install_secs: "{{ install_timeout | default(3600) }}"
+    boot_delay: "{{ reboot_delay | default(180) }}"
+    boot_wait: "{{ reboot_timeout | default(2400) }}"
+    nc_port: "{{ netconf_port | default(830) }}"
+    rpc_timeout: "{{ device_rpc_timeout | default(300) }}"
+    down_timeout: "{{ reboot_down_timeout | default(600) }}"
+    pull_secs: "{{ pull_timeout | default(3600) }}"
+    stage_dir: "{{ device_stage_dir | default('/var/tmp') }}"
+    controller_dir: "{{ awx_stage_dir | default('/tmp') }}"
+    controller_image: "{{ controller_dir }}/{{ image_url | basename }}"
+    verify_tls: "{{ validate_certs | default(true) }}"
+    ver_regex: "{{ version_regex | default('[0-9]+\\.[0-9]+[A-Z][0-9]+(-S[0-9]+)?(\\.[0-9]+)?') }}"
+    mount_regex: "{{ junos_mount_regex | default('^\\s*(/cf/var|/var|/\\.mount/var)\\s*$') }}"
+
+    free_mb: >-
+      {{ ((([ storage.parsed_output['system-storage-information']['filesystem'] ]
+             if storage.parsed_output['system-storage-information']['filesystem'] is mapping
+             else storage.parsed_output['system-storage-information']['filesystem'])
+            | selectattr('mounted-on', 'defined')
+            | selectattr('mounted-on', 'search', mount_regex)
+            | map(attribute='available-blocks') | map('string') | map('int')
+            | list) + [0]) | max // 2048 }}
+
+  tasks:
+    - name: Read version and model off the device
+      juniper.device.rpc:
+        port: "{{ nc_port }}"
+        timeout: "{{ rpc_timeout }}"
+        rpcs: ["get-software-information"]
+        format: xml
+      register: pre
+
+    - name: Work out what this device needs
+      ansible.builtin.set_fact:
+        host_target: "{{ ansible_host | default(inventory_hostname) }}"
+        model: "{{ pre.parsed_output['software-information']['product-model'] | default('') | string | trim }}"
+        current_version: "{{ pre.parsed_output['software-information']['junos-version'] | default('unknown') | string | trim }}"
+
+    - name: Pick the image for this model
+      ansible.builtin.set_fact:
+        image_url: "{{ image_map[model] | default(default_image, true) }}"
+
+    - name: Derive the target version from the image filename
+      ansible.builtin.set_fact:
+        want_version: "{{ target_version | default(image_url | basename | regex_search(ver_regex), true) }}"
+
+    - name: Sanity check the image and target version
+      ansible.builtin.assert:
+        that:
+          - image_url | length > 0
+          - want_version | default('', true) | length > 0
+        fail_msg: >-
+          No image for model '{{ model }}'. Set package_url, add '{{ model }}' to package_url_map,
+          or set target_version if the version cannot be parsed from the filename.
+        quiet: true
+
+    - name: Upgrade plan
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} ({{ host_target }}) {{ model }}: {{ current_version }} -> {{ want_version }} via {{ image_url }}"
+
+    - name: Skip devices already on the target version
+      ansible.builtin.meta: end_host
+      when:
+        - current_version == want_version
+        - not (force | bool)
+
+    - name: Storage check
+      juniper.device.rpc:
+        port: "{{ nc_port }}"
+        timeout: "{{ rpc_timeout }}"
+        rpcs: ["get-system-storage"]
+        format: xml
+      register: storage
+
+    - name: Record free space before cleanup
+      ansible.builtin.set_fact:
+        free_before: "{{ free_mb }}"
+
+    - name: Run "request system storage cleanup"
+      juniper.device.rpc:
+        port: "{{ nc_port }}"
+        timeout: "{{ rpc_timeout }}"
+        rpcs: ["request-system-storage-cleanup"]
+        format: xml
+      when: do_cleanup | bool
+
+    - name: Run "request system storage consolidate"
+      juniper.device.command:
+        port: "{{ nc_port }}"
+        timeout: "{{ rpc_timeout }}"
+        commands: "request system storage consolidate"
+        format: text
+      failed_when: false
+      when: do_consolidate | bool
+
+    - name: Storage re-check
+      juniper.device.rpc:
+        port: "{{ nc_port }}"
+        timeout: "{{ rpc_timeout }}"
+        rpcs: ["get-system-storage"]
+        format: xml
+      register: storage
+
+    - name: Record free space after cleanup
+      ansible.builtin.set_fact:
+        free_after: "{{ free_mb }}"
+
+    - name: Storage detail
+      juniper.device.command:
+        port: "{{ nc_port }}"
+        timeout: "{{ rpc_timeout }}"
+        commands: "show system storage"
+        format: text
+      register: storage_detail
+
+    - name: All partitions after cleanup
+      ansible.builtin.debug:
+        var: storage_detail.stdout
+
+    - name: Storage result
+      ansible.builtin.debug:
+        msg: >-
+          {{ free_before }} MB free -> {{ free_after }} MB free
+          (reclaimed {{ (free_after | int) - (free_before | int) }} MB, need {{ required_free_mb }} MB)
+
+    - name: Gate the upgrade on free space
+      ansible.builtin.assert:
+        that:
+          - (free_after | int) >= (required_free_mb | int)
+        fail_msg: >-
+          Only {{ free_after }} MB free after cleanup ({{ required_free_mb }} MB required).
+          If this device reports 0 MB, junos_mount_regex may not match its mount points.
+        quiet: true
+      when: not (check_mode_only | bool)
+
+    - name: Pre-check verdict (check_only)
+      ansible.builtin.debug:
+        msg: >-
+          check_only set - stopping before install.
+          {{ 'READY' if ((free_after | int) >= (required_free_mb | int)) else 'NOT READY, insufficient space' }}
+          for {{ current_version }} -> {{ want_version }}.
+      when: check_mode_only | bool
+
+    - name: Stop here when check_only is set
+      ansible.builtin.meta: end_host
+      when: check_mode_only | bool
+
+    - name: Download image to the AWX node
+      ansible.builtin.get_url:
+        url: "{{ image_url }}"
+        dest: "{{ controller_image }}"
+        mode: "0644"
+        validate_certs: "{{ verify_tls | bool }}"
+      register: dl_job
+      async: "{{ pull_secs }}"
+      poll: 0
+
+    - name: Downloading to the AWX node (ticks every {{ tick }}s)
+      ansible.builtin.async_status:
+        jid: "{{ dl_job.ansible_job_id }}"
+      register: dl_result
+      until: dl_result.finished
+      retries: "{{ ((pull_secs | int) // (tick | int)) + 1 }}"
+      delay: "{{ tick }}"
+
+    - name: Download output
+      ansible.builtin.debug:
+        var: dl_result
+
+    - name: Confirm the image landed on the AWX node
+      ansible.builtin.stat:
+        path: "{{ controller_image }}"
+      register: local_image
+      failed_when: >-
+        not (local_image.stat.exists | default(false)) or
+        (local_image.stat.size | default(0) | int) < 1048576
+
+    - name: Local image
+      ansible.builtin.debug:
+        msg: "{{ controller_image }} ({{ local_image.stat.size | int // 1048576 }} MB)"
+
+    - name: SCP to {{ stage_dir }} and install {{ want_version }}
+      juniper.device.software:
+        port: "{{ nc_port }}"
+        local_package: "{{ controller_image }}"
+        remote_package: "{{ stage_dir }}/{{ image_url | basename }}"
+        version: "{{ want_version }}"
+        validate: false
+        reboot: false
+        cleanfs: false
+        timeout: "{{ install_secs }}"
+        install_timeout: "{{ install_secs }}"
+        checksum_timeout: 600
+      register: install_job
+      async: "{{ install_secs }}"
+      poll: 0
+
+    - name: SCP and install in progress (ticks every {{ tick }}s)
+      ansible.builtin.async_status:
+        jid: "{{ install_job.ansible_job_id }}"
+      register: install_result
+      until: install_result.finished
+      retries: "{{ ((install_secs | int) // (tick | int)) + 1 }}"
+      delay: "{{ tick }}"
+
+    - name: Install output
+      ansible.builtin.debug:
+        var: install_result
+
+    - name: Fail if the install did not succeed
+      ansible.builtin.assert:
+        that:
+          - (install_result.finished | default(0) | int) == 1
+          - not (install_result.failed | default(false))
+        fail_msg: "Software add failed: {{ install_result.msg | default('timed out after ' ~ install_secs ~ 's') }}"
+        quiet: true
+
+    - name: Reboot the device
+      juniper.device.system:
+        port: "{{ nc_port }}"
+        action: "reboot"
+      register: reboot_result
+      ignore_errors: true
+
+    - name: Reboot request result
+      ansible.builtin.debug:
+        var: reboot_result
+
+    - name: Confirm the device actually went down
+      ansible.builtin.wait_for:
+        host: "{{ host_target }}"
+        port: "{{ nc_port }}"
+        state: stopped
+        sleep: 15
+        connect_timeout: 20
+        timeout: "{{ down_timeout }}"
+      register: went_down
+      failed_when: false
+
+    - name: Reboot observed
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Device dropped off the network, rebooting.' if not (went_down.failed | default(false))
+             else 'Never saw the port close after ' ~ down_timeout ~ 's - continuing anyway and
+                   waiting for the target version to appear.' }}
+
+    - name: Wait for NETCONF to come back
+      ansible.builtin.wait_for:
+        host: "{{ host_target }}"
+        port: "{{ nc_port }}"
+        state: started
+        delay: "{{ boot_delay }}"
+        sleep: 15
+        timeout: "{{ boot_wait }}"
+
+    - name: Wait for Junos to answer RPCs
+      juniper.device.rpc:
+        port: "{{ nc_port }}"
+        timeout: "{{ rpc_timeout }}"
+        rpcs: ["get-software-information"]
+        format: xml
+      register: post
+      until: post is succeeded
+      retries: "{{ ((boot_wait | int) // 20) + 1 }}"
+      delay: 20
+
+    - name: Re-read the version, allowing for a late reboot
+      juniper.device.rpc:
+        port: "{{ nc_port }}"
+        timeout: "{{ rpc_timeout }}"
+        rpcs: ["get-software-information"]
+        format: xml
+      register: post
+      until: >-
+        post is succeeded and
+        (post.parsed_output['software-information']['junos-version'] | default('') | string | trim) == want_version
+      retries: 6
+      delay: 20
+      failed_when: false
+
+    - name: Confirm the device is running {{ want_version }}
+      ansible.builtin.assert:
+        that:
+          - (post.parsed_output['software-information']['junos-version'] | string | trim) == want_version
+        fail_msg: >-
+          Expected {{ want_version }}, device came back on
+          {{ post.parsed_output['software-information']['junos-version'] | string | trim }}.
+        quiet: true
+
+    - name: Post-upgrade health
+      juniper.device.command:
+        port: "{{ nc_port }}"
+        timeout: "{{ rpc_timeout }}"
+        commands:
+          - "show system uptime"
+          - "show chassis alarms"
+          - "show system storage"
+        format: text
+      register: health
+
+    - name: Health output
+      ansible.builtin.debug:
+        var: item.stdout
+      loop: "{{ health.results | default([health]) }}"
+      loop_control:
+        label: "{{ item.command | default('check') }}"
+
+    - name: Upgrade complete
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} is back online on {{ want_version }} (was {{ current_version }})."

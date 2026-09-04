@@ -1,0 +1,122 @@
+{
+  "name": "SRX Code Upgrade",
+  "description": "Storage check, cleanup, code pull, upgrade, reboot and verify for SRX devices.",
+  "spec": [
+    {
+      "question_name": "Image URL",
+      "question_description": "Full URL to the Junos package. The SRX pulls it directly, so it must be reachable from the device. Leave blank only if you are using the per-model map below.",
+      "variable": "package_url",
+      "type": "text",
+      "required": false,
+      "default": "http://juniper.example.net/software/junos/junos-srxsme-23.4R2-S5.5.tgz",
+      "min": 0,
+      "max": 1024
+    },
+    {
+      "question_name": "Per-model image map (optional)",
+      "question_description": "JSON object of model to URL, for inventories with mixed SRX models. Overrides Image URL for any model listed. Example: {\"SRX345\": \"http://.../junos-srxsme-23.4R2-S5.5.tgz\", \"SRX1500\": \"http://.../junos-srxentedge-23.4R2-S5.5.tgz\"}",
+      "variable": "package_url_map",
+      "type": "textarea",
+      "required": false,
+      "default": "{}",
+      "min": 0,
+      "max": 4096
+    },
+    {
+      "question_name": "Target version override",
+      "question_description": "Normally parsed from the image filename (23.4R2-S5.5). Set this only if the filename does not contain a parseable version.",
+      "variable": "target_version",
+      "type": "text",
+      "required": false,
+      "default": "",
+      "min": 0,
+      "max": 64
+    },
+    {
+      "question_name": "Pre-check only",
+      "question_description": "true = run the storage check, cleanup and consolidate, report whether each device is ready, and stop before installing anything.",
+      "variable": "check_only",
+      "type": "multiplechoice",
+      "required": true,
+      "default": "false",
+      "choices": ["false", "true"]
+    },
+    {
+      "question_name": "Force reinstall",
+      "question_description": "true = upgrade even if the device already reports the target version. Devices already on target are skipped otherwise.",
+      "variable": "force_upgrade",
+      "type": "multiplechoice",
+      "required": true,
+      "default": "false",
+      "choices": ["false", "true"]
+    },
+    {
+      "question_name": "Devices at a time",
+      "question_description": "How many devices to upgrade concurrently. Keep at 1 to take down one box at a time.",
+      "variable": "upgrade_batch",
+      "type": "integer",
+      "required": true,
+      "default": 1,
+      "min": 1,
+      "max": 50
+    },
+    {
+      "question_name": "Required free space (MB)",
+      "question_description": "The upgrade is blocked if less than this is free on the Junos partition after cleanup.",
+      "variable": "min_free_mb",
+      "type": "integer",
+      "required": true,
+      "default": 2000,
+      "min": 0,
+      "max": 64000
+    },
+    {
+      "question_name": "Run storage cleanup",
+      "question_description": "Runs 'request system storage cleanup' before installing.",
+      "variable": "run_storage_cleanup",
+      "type": "multiplechoice",
+      "required": true,
+      "default": "true",
+      "choices": ["true", "false"]
+    },
+    {
+      "question_name": "Run storage consolidate",
+      "question_description": "Runs 'request system storage consolidate'. Branch SRX only; skipped harmlessly elsewhere.",
+      "variable": "run_storage_consolidate",
+      "type": "multiplechoice",
+      "required": true,
+      "default": "true",
+      "choices": ["true", "false"]
+    },
+    {
+      "question_name": "Install timeout (seconds)",
+      "question_description": "Ceiling for the combined download and install. Raise it for slow links or large images.",
+      "variable": "install_timeout",
+      "type": "integer",
+      "required": true,
+      "default": 3600,
+      "min": 600,
+      "max": 14400
+    },
+    {
+      "question_name": "Progress tick (seconds)",
+      "question_description": "How often the job output prints a progress line while the install runs.",
+      "variable": "poll_interval",
+      "type": "integer",
+      "required": true,
+      "default": 30,
+      "min": 10,
+      "max": 300
+    },
+    {
+      "question_name": "Reboot wait (seconds)",
+      "question_description": "How long to wait for the device to come back on NETCONF after rebooting.",
+      "variable": "reboot_timeout",
+      "type": "integer",
+      "required": true,
+      "default": 2400,
+      "min": 300,
+      "max": 7200
+    }
+  ]
+}

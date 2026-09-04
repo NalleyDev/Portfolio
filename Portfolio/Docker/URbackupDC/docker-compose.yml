@@ -1,0 +1,23 @@
+# This is a Docker Compose file for setting up an URBackup server with NFS storage.
+services:
+  urbackup:
+    image: uroni/urbackup-server:latest
+    container_name: urbackup
+    restart: unless-stopped
+    ports:
+      - "55413:55413"         # Web interface
+      - "55414:55414"         # Internet clients TCP
+      - "55415:55415/udp"     # Internet clients UDP
+      - "35623:35623/udp"     # Local network discovery
+    volumes:
+      - urbackup_data:/var/urbackup
+      - /mnt/urbackup:/backups  # This is the NFS mount on the host
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+
+volumes:
+  urbackup_data:
+
+# Note: The NFS mount must be mounted on the host machine at /mnt/urbackup
